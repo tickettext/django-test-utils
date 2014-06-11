@@ -56,7 +56,12 @@ from django.http import HttpRequest
 from django.utils.datastructures import SortedDict
 from django.contrib import auth
 from django.core import signals
-from django.db import close_connection
+
+try:
+    from django.db import close_old_connections
+except ImportError:
+    from django.db import close_connection
+    close_old_connections = None
 
 try:
     from django.core.servers.basehttp import AdminMediaHandler as StaticFilesHandler
@@ -90,11 +95,19 @@ class DjangoWsgiFix(object):
         self.app = app
 
     def __call__(self, environ, start_response):
-        signals.request_finished.disconnect(close_connection)
+        if close_old_connections is not None: # Django 1.6+
+            signals.request_started.disconnect(close_old_connections)
+            signals.request_finished.disconnect(close_old_connections)
+        else: # Django < 1.6
+            signals.request_finished.disconnect(close_connection)
         try:
             return self.app(environ, start_response)
         finally:
-            signals.request_finished.connect(close_connection)
+            if close_old_connections: # Django 1.6+
+                signals.request_started.connect(close_old_connections)
+                signals.request_finished.connect(close_old_connections)
+            else: # Django < 1.6
+                signals.request_finished.connect(close_connection)
 
 
 def setup(host=None, port=None, allow_xhtml=True, propagate=True):
