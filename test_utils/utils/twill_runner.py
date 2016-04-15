@@ -80,7 +80,47 @@ DEFAULT_PORT = 9090
 INSTALLED = SortedDict()   # keep track of the installed hooks
 
 
-class DjangoWsgiFix(object):
+def disconnect_request_signal_handlers():
+    """
+    Disconnect the close-db-connection handler for the 'request_started' and
+    'request_finished' signals.
+    """
+    if close_old_connections is not None: # Django 1.6+
+        signals.request_started.disconnect(close_old_connections)
+        signals.request_finished.disconnect(close_old_connections)
+    else: # Django < 1.6
+        signals.request_finished.disconnect(close_connection)
+
+
+def connect_request_signal_handlers():
+    """
+    (Re-)connect the close-db-connection handler for the 'request_started' and
+    'request_finished' signals.
+    """
+    if close_old_connections: # Django 1.6+
+        signals.request_started.connect(close_old_connections)
+        signals.request_finished.connect(close_old_connections)
+        # pass
+    else: # Django < 1.6
+        signals.request_finished.connect(close_connection)
+
+
+class DjangoWSGIResponseFix(object):
+    def __init__(self, response):
+        self.response = response
+        
+    def __iter__(self):
+        return iter(self.response)
+    
+    def close(self):
+        self.response.close()
+        # Now we can re-connect the signal handlers
+        # (This is similar to what the Django test client does: see
+        # https://github.com/django/django/blob/1.8/django/test/client.py#L135)
+        connect_request_signal_handlers()
+
+
+class DjangoWSGIFix(object):
     """Django closes the database connection after every request;
     this breaks the use of transactions in your tests. This wraps
     around Django's WSGI interface and will disable the critical
@@ -95,19 +135,12 @@ class DjangoWsgiFix(object):
         self.app = app
 
     def __call__(self, environ, start_response):
-        if close_old_connections is not None: # Django 1.6+
-            signals.request_started.disconnect(close_old_connections)
-            signals.request_finished.disconnect(close_old_connections)
-        else: # Django < 1.6
-            signals.request_finished.disconnect(close_connection)
-        try:
-            return self.app(environ, start_response)
-        finally:
-            if close_old_connections: # Django 1.6+
-                signals.request_started.connect(close_old_connections)
-                signals.request_finished.connect(close_old_connections)
-            else: # Django < 1.6
-                signals.request_finished.connect(close_connection)
+        # Disconnect the signal handler that closes old DB connections
+        disconnect_request_signal_handlers()
+
+        # Don't re-connect the signal handler yet: this shouldn't be done
+        # until response.close() is called.
+        return DjangoWSGIResponseFix(self.app(environ, start_response))
 
 
 def setup(host=None, port=None, allow_xhtml=True, propagate=True):
@@ -134,7 +167,7 @@ def setup(host=None, port=None, allow_xhtml=True, propagate=True):
 
     if not key in INSTALLED:
         # installer wsgi handler
-        app = DjangoWsgiFix(StaticFilesHandler(WSGIHandler()))
+        app = DjangoWSGIFix(StaticFilesHandler(WSGIHandler()))
         twill.add_wsgi_intercept(host, port, lambda: app)
 
         # start browser fresh
