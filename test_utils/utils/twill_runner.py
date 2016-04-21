@@ -44,6 +44,7 @@ from __future__ import absolute_import
 # TODO: import all names with a _-prefix to keep the namespace clean with the twill stuff?
 import urlparse
 import cookielib
+from collections import OrderedDict
 
 import twill
 import twill.commands
@@ -53,7 +54,6 @@ from django.conf import settings
 from django.core.handlers.wsgi import WSGIHandler
 from django.core.urlresolvers import reverse
 from django.http import HttpRequest
-from django.utils.datastructures import SortedDict
 from django.contrib import auth
 from django.core import signals
 
@@ -77,7 +77,7 @@ __all__ = ('INSTALLED', 'setup', 'teardown', 'reverse',) + tuple(twill.commands.
 
 DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 9090
-INSTALLED = SortedDict()   # keep track of the installed hooks
+INSTALLED = OrderedDict()   # keep track of the installed hooks
 
 
 def disconnect_request_signal_handlers():
